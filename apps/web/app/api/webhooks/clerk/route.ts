@@ -6,8 +6,8 @@ export async function POST(req: Request) {
   try {
     const body = await req.text();
     const headers = req.headers;
-
-    const wh = new Webhook(process.env.CLERK_WEBHOOK_SECRET!);
+    const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET as string
+    const wh = new Webhook(WEBHOOK_SECRET);
 
     const event = wh.verify(body, {
       "svix-id": headers.get("svix-id")!,
