@@ -1,8 +1,4 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {
-  allowedDevOrigins: [
-    "https://funny-mugs-thank.loca.lt"
-  ]
-}
+const nextConfig = {}
 
 export default nextConfig;
