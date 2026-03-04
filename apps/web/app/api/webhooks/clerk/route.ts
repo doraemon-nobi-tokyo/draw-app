@@ -75,6 +75,8 @@ export async function POST(req: Request) {
     const userEvent = event as UserChangedEvent;
     const primaryEmail = getPrimaryEmail(userEvent.data);
     const name = getName(userEvent.data, primaryEmail);
+    const firstname = userEvent.data.first_name?.trim() ?? "";
+    const lastname = userEvent.data.last_name?.trim() ?? "";
     const username = getUsername(userEvent.data);
 
     const existingUser = await prisma.user.findUnique({
@@ -88,6 +90,8 @@ export async function POST(req: Request) {
         data: {
           ...(primaryEmail ? { email: primaryEmail } : {}),
           name,
+          firstname,
+          lastname,
           username,
           photo: userEvent.data.image_url ?? null,
         },
@@ -105,6 +109,8 @@ export async function POST(req: Request) {
         id: userEvent.data.id,
         email: primaryEmail,
         name,
+        firstname,
+        lastname,
         username,
         photo: userEvent.data.image_url ?? null,
       },
@@ -116,4 +122,3 @@ export async function POST(req: Request) {
     return new Response("Webhook error", { status: 400 });
   }
 }
-

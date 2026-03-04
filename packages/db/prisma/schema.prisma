@@ -17,6 +17,8 @@ model User{
   id    String     @id 
   email String  @unique
   name  String
+  firstname String
+  lastname String
   username String @unique
   photo String?
   rooms     Room[]  @relation("AdminRooms")
