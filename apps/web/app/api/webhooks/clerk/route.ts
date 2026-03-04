@@ -1,66 +1,119 @@
-import { Webhook } from "svix";
 import type { WebhookEvent } from "@clerk/nextjs/server";
-import {prisma} from "@repo/db";
+import { prisma } from "@repo/db";
+import { Webhook } from "svix";
+
+type UserChangedEvent = Extract<WebhookEvent, { type: "user.created" | "user.updated" }>;
+type UserDeletedEvent = Extract<WebhookEvent, { type: "user.deleted" }>;
+
+function getPrimaryEmail(data: UserChangedEvent["data"]): string | null {
+  const primaryEmail = data.email_addresses.find(
+    (emailAddress) => emailAddress.id === data.primary_email_address_id,
+  );
+
+  return primaryEmail?.email_address ?? data.email_addresses[0]?.email_address ?? null;
+}
+
+function getName(data: UserChangedEvent["data"], email: string | null): string {
+  const firstName = data.first_name?.trim() ?? "";
+  const lastName = data.last_name?.trim() ?? "";
+  const fullName = [firstName, lastName].filter(Boolean).join(" ");
+
+  if (fullName) {
+    return fullName;
+  }
+
+  const username = data.username?.trim();
+  if (username) {
+    return username;
+  }
+
+  if (email) {
+    return email.split("@")[0] ?? data.id;
+  }
+
+  return data.id;
+}
+
+function getUsername(data: UserChangedEvent["data"]): string {
+  return data.username?.trim() || data.id;
+}
 
 export async function POST(req: Request) {
   try {
-    const body = await req.text();
-    const headers = req.headers;
-    const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET as string
-    const wh = new Webhook(WEBHOOK_SECRET);
+    const webhookSecret = process.env.WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      console.error("Missing WEBHOOK_SECRET");
+      return new Response("Webhook secret not configured", { status: 500 });
+    }
 
+    const body = await req.text();
+    const svixId = req.headers.get("svix-id");
+    const svixTimestamp = req.headers.get("svix-timestamp");
+    const svixSignature = req.headers.get("svix-signature");
+
+    if (!svixId || !svixTimestamp || !svixSignature) {
+      return new Response("Missing Svix headers", { status: 400 });
+    }
+
+    const wh = new Webhook(webhookSecret);
     const event = wh.verify(body, {
-      "svix-id": headers.get("svix-id")!,
-      "svix-timestamp": headers.get("svix-timestamp")!,
-      "svix-signature": headers.get("svix-signature")!,
+      "svix-id": svixId,
+      "svix-timestamp": svixTimestamp,
+      "svix-signature": svixSignature,
     }) as WebhookEvent;
 
-    // ✅ Only handle user.created
-    if (event.type !== "user.created") {
+    if (event.type === "user.deleted") {
+      const deletedEvent = event as UserDeletedEvent;
+      await prisma.user.deleteMany({ where: { id: deletedEvent.data.id } });
+      return new Response("User deleted", { status: 200 });
+    }
+
+    if (event.type !== "user.created" && event.type !== "user.updated") {
       return new Response("Event ignored", { status: 200 });
     }
 
-    // 🔹 Get primary email safely
-    const emailObj = event.data.email_addresses.find(
-      (e) => e.id === event.data.primary_email_address_id
-    );
+    const userEvent = event as UserChangedEvent;
+    const primaryEmail = getPrimaryEmail(userEvent.data);
+    const name = getName(userEvent.data, primaryEmail);
+    const username = getUsername(userEvent.data);
 
-    if (!emailObj) {
+    const existingUser = await prisma.user.findUnique({
+      where: { id: userEvent.data.id },
+      select: { id: true },
+    });
+
+    if (existingUser) {
+      await prisma.user.update({
+        where: { id: userEvent.data.id },
+        data: {
+          ...(primaryEmail ? { email: primaryEmail } : {}),
+          name,
+          username,
+          photo: userEvent.data.image_url ?? null,
+        },
+      });
+
+      return new Response("User synced", { status: 200 });
+    }
+
+    if (!primaryEmail) {
       return new Response("Primary email missing", { status: 400 });
     }
 
-    // 🔹 Ensure required fields exist (Type narrowing)
-    if (!event.data.first_name) {
-      return new Response("First name missing", { status: 400 });
-    }
-
-    if (!event.data.username) {
-      return new Response("Username missing", { status: 400 });
-    }
-
-    const email = emailObj.email_address;
-    const name = event.data.first_name;
-    const username = event.data.username;
-
-    // ✅ Idempotent (safe if webhook fires twice)
-    await prisma.user.upsert({
-      where: { id: event.data.id },
-      update: {},
-      create: {
-        id: event.data.id,        // Clerk ID
-        email,
+    await prisma.user.create({
+      data: {
+        id: userEvent.data.id,
+        email: primaryEmail,
         name,
         username,
-        photo: event.data.image_url ?? null,
+        photo: userEvent.data.image_url ?? null,
       },
     });
 
     return new Response("User synced", { status: 200 });
-
   } catch (err) {
     console.error("Clerk webhook error:", err);
     return new Response("Webhook error", { status: 400 });
   }
 }
-
 
