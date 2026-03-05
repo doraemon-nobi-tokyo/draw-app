@@ -1,5 +1,6 @@
 import type { WebhookEvent } from "@clerk/nextjs/server";
 import { prisma } from "@repo/db";
+import { NextResponse } from "next/server";
 import { Webhook } from "svix";
 
 type UserChangedEvent = Extract<WebhookEvent, { type: "user.created" | "user.updated" }>;
@@ -119,6 +120,9 @@ export async function POST(req: Request) {
     return new Response("User synced", { status: 200 });
   } catch (err) {
     console.error("Clerk webhook error:", err);
-    return new Response("Webhook error", { status: 400 });
+    return NextResponse.json({
+      errorType:"Webhook error",
+      error: err
+    }, { status: 400});
   }
 }
